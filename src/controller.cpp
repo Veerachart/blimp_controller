@@ -22,6 +22,15 @@ class PID {
         double dt;
         
     public:
+        PID () {
+            kp = 0.0;
+            ki = 0.0;
+            kd = 0.0;
+            prev_u = 0;
+            prev_e_1 = 0;
+            prev_e_2 = 0;
+            last = ros::Time::now();
+        }
         PID (float kp_, float ki_, float kd_) {
             kp = kp_;
             ki = ki_;
@@ -44,7 +53,7 @@ class PID {
             prev_u = current_u;
             prev_e_2 = prev_e_1;
             prev_e_1 = current_e;
-            
+            last = current;
             return current_u;
         }
         
@@ -52,6 +61,13 @@ class PID {
             kp = kp_;
             ki = ki_;
             kd = kd_;
+        }
+        
+        void reset () {
+            prev_u = 0;
+            prev_e_1 = 0;
+            prev_e_2 = 0;
+            last = ros::Time::now();
         }
 };
 
@@ -61,7 +77,7 @@ class BlimpController {
         dynamic_reconfigure::Server<blimp_controller::ControllerConfig> server;
         dynamic_reconfigure::Server<blimp_controller::ControllerConfig>::CallbackType f;
         tf::TransformListener listener;
-        PID *pid_thrust;
+        PID pid_thrust;
         float command_thrust;
         ros::Publisher command_pub;
         bool isManual;
@@ -75,10 +91,10 @@ class BlimpController {
             nh_ = node_;
             f = boost::bind(&BlimpController::callback, this, _1, _2);
             server.setCallback(f);
-            pid_thrust = new PID(0.01, 0.0, 0.01);
+            pid_thrust.tune_pid(0.12, 0.0, 0.15);
             command_pub = nh_.advertise<std_msgs::Float32>("thrust",1);
             isManual = true;
-            goal = tf::Vector3(0.0,0.0,1.0);
+            goal = tf::Vector3(0.0,0.0,0.0);
             q.setRPY(0.0, 0.0, 0.0);
             transform.setOrigin(goal);
             transform.setRotation(q);
@@ -89,6 +105,7 @@ class BlimpController {
             isManual = config.manual;
             transform.setOrigin(goal);
             transform.setRotation(q);
+            pid_thrust.tune_pid((float)config.groups.pid.p, (float)config.groups.pid.i, (float)config.groups.pid.d);
         }
         
         void publish(){
@@ -107,7 +124,13 @@ class BlimpController {
                 if (std::find(frames.begin(), frames.end(), "blimp") != frames.end()){
                     listener.getLatestCommonTime("world","blimp",last_time,error);
                     if (ros::Time::now()-last_time > ros::Duration(1))
+                    {
+                        pid_thrust.reset();
+                        std_msgs::Float32 msg;
+                        msg.data = 0;
+                        command_pub.publish(msg);
                         return;         // Too old
+                    }
                     listener.lookupTransform("blimp", "goal", ros::Time(0), transform);
                     
                     // TODO align orientation to the shortest part.
@@ -117,7 +140,7 @@ class BlimpController {
                     float e_y = transform.getOrigin().y();
                     float e_z = transform.getOrigin().z();
                     
-                    command_thrust = pid_thrust->update(e_x);
+                    command_thrust = pid_thrust.update(e_x);
                     std_msgs::Float32 msg;
                     msg.data = command_thrust;
                     command_pub.publish(msg);
