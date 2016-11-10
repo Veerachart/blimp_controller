@@ -130,6 +130,7 @@ include_directories(
 
 ## Declare a C++ executable
 add_executable(controller_node src/controller.cpp)
+add_executable(simulator_node src/blimp_simulator.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -137,6 +138,9 @@ add_executable(controller_node src/controller.cpp)
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(controller_node
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(simulator_node
   ${catkin_LIBRARIES}
 )
 
