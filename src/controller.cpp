@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <std_msgs/Float32.h>
 
 class PID {
     private:
@@ -62,22 +63,36 @@ class BlimpController {
         tf::TransformListener listener;
         PID *pid_thrust;
         float command_thrust;
+        ros::Publisher command_pub;
+        bool isManual;
+        tf::TransformBroadcaster br;
+        tf::Transform transform;
+        tf::Vector3 goal;
+        tf::Quaternion q;
     public:
         BlimpController(ros::NodeHandle &node_)
         {
             nh_ = node_;
             f = boost::bind(&BlimpController::callback, this, _1, _2);
             server.setCallback(f);
-            pid_thrust = new PID(1.0, 0.0, 1.0);
+            pid_thrust = new PID(0.01, 0.0, 0.01);
+            command_pub = nh_.advertise<std_msgs::Float32>("thrust",1);
+            isManual = true;
+            goal = tf::Vector3(0.0,0.0,1.0);
+            q.setRPY(0.0, 0.0, 0.0);
+            transform.setOrigin(goal);
+            transform.setRotation(q);
         }
         void callback(blimp_controller::ControllerConfig &config, uint32_t level){
-            if(config.go){
-                static tf::TransformBroadcaster br;
-                tf::Transform transform;
-                transform.setOrigin( tf::Vector3(config.groups.goal.x, config.groups.goal.y, config.groups.goal.z) );
-                tf::Quaternion q;
-                q.setRPY(0, 0, config.groups.goal.yaw);
-                transform.setRotation(q);
+            goal = tf::Vector3(config.groups.goal.x, config.groups.goal.y, config.groups.goal.z);
+            q.setRPY(0.0, 0.0, config.groups.goal.yaw);
+            isManual = config.manual;
+            transform.setOrigin(goal);
+            transform.setRotation(q);
+        }
+        
+        void publish(){
+            if (isManual){
                 br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "goal"));
             }
         }
@@ -103,7 +118,9 @@ class BlimpController {
                     float e_z = transform.getOrigin().z();
                     
                     command_thrust = pid_thrust->update(e_x);
-                    ROS_INFO("%.2f", command_thrust);
+                    std_msgs::Float32 msg;
+                    msg.data = command_thrust;
+                    command_pub.publish(msg);
                     
                 }
             }
@@ -120,6 +137,7 @@ int main (int argc, char **argv) {
     ros::Rate rate(30);
     BlimpController blimp_controller(nh);
     while (nh.ok()){
+        blimp_controller.publish();
         blimp_controller.navigate();
         ros::spinOnce();
         rate.sleep();
