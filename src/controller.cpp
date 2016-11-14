@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <std_msgs/Float32.h>
 
+const double PI = 3.141592653589793;
+
 class PID {
     private:
         float kp, ki, kd;
@@ -79,12 +81,16 @@ class BlimpController {
         tf::TransformListener listener;
         PID pid_thrust;
         float command_thrust;
+        float command_yaw;
         ros::Publisher command_pub;
+        ros::Publisher yaw_pub;
         bool isManual;
+        bool isWaitingAngle;
         tf::TransformBroadcaster br;
         tf::Transform transform;
         tf::Vector3 goal;
         tf::Quaternion q;
+        float prev_dist;
     public:
         BlimpController(ros::NodeHandle &node_)
         {
@@ -93,15 +99,18 @@ class BlimpController {
             server.setCallback(f);
             pid_thrust.tune_pid(0.12, 0.0, 0.15);
             command_pub = nh_.advertise<std_msgs::Float32>("thrust",1);
+            yaw_pub = nh_.advertise<std_msgs::Float32>("yaw_cmd",1);
             isManual = true;
+            isWaitingAngle = false;
             goal = tf::Vector3(0.0,0.0,0.0);
             q.setRPY(0.0, 0.0, 0.0);
             transform.setOrigin(goal);
             transform.setRotation(q);
+            prev_dist = 1e6;
         }
         void callback(blimp_controller::ControllerConfig &config, uint32_t level){
             goal = tf::Vector3(config.groups.goal.x, config.groups.goal.y, config.groups.goal.z);
-            q.setRPY(0.0, 0.0, config.groups.goal.yaw);
+            q.setRPY(0.0, 0.0, config.groups.goal.yaw*PI/180);
             isManual = config.manual;
             transform.setOrigin(goal);
             transform.setRotation(q);
@@ -126,25 +135,92 @@ class BlimpController {
                     if (ros::Time::now()-last_time > ros::Duration(1))
                     {
                         pid_thrust.reset();
+                        prev_dist = 1e6;
                         std_msgs::Float32 msg;
                         msg.data = 0;
                         command_pub.publish(msg);
                         return;         // Too old
                     }
                     listener.lookupTransform("blimp", "goal", ros::Time(0), transform);
+                    tf::StampedTransform t_blimp;
+                    listener.lookupTransform("world", "blimp", last_time, t_blimp);
                     
                     // TODO align orientation to the shortest part.
                     // transform.getOrientation() --> Quaternion
-                    
-                    float e_x = transform.getOrigin().x();
-                    float e_y = transform.getOrigin().y();
-                    float e_z = transform.getOrigin().z();
-                    
-                    command_thrust = pid_thrust.update(e_x);
-                    std_msgs::Float32 msg;
-                    msg.data = command_thrust;
-                    command_pub.publish(msg);
-                    
+                    tf::Vector3 d = transform.getOrigin();
+                    tf::Vector3 d_blimp = t_blimp.getOrigin();
+                    tf::Matrix3x3 m(t_blimp.getRotation());
+                    double r_blimp, p_blimp, y_blimp;
+                    m.getRPY(r_blimp, p_blimp, y_blimp);
+                    if (isWaitingAngle) {           // Waiting for the turn
+                        if (fabs(y_blimp - command_yaw) < 0.01) {      // Angle is already good
+                            isWaitingAngle = false;
+                            pid_thrust.reset();
+                            prev_dist = 1e6;
+                            std_msgs::Float32 msg;
+                            msg.data = 0;
+                            command_pub.publish(msg);
+                        }
+                    }
+                    else if (pow(d.x(),2) + pow(d.y(),2) > 1.0e-4) {     // Some displacement to travel
+                        if (fabs(d.y()) > 0.02) {     // Align x axis to the displacement
+                            double y_turn = atan2(d.y(), d.x());
+                            std_msgs::Float32 msg;
+                            command_yaw = y_blimp + y_turn;
+                            if (command_yaw > PI)
+                                command_yaw -= 2*PI;
+                            else if (command_yaw <= -PI)
+                                command_yaw += 2*PI;
+                            msg.data = command_yaw;
+                            yaw_pub.publish(msg);
+                            pid_thrust.reset();
+                            prev_dist = 1e6;
+                            msg.data = 0;
+                            command_pub.publish(msg);
+                            isWaitingAngle = true;
+                        }
+                        else {
+                            float e_x = d.x();
+                            //float e_y = d.y();
+                            //float e_z = d.z();
+                            
+                            command_thrust = pid_thrust.update(e_x);
+                            std_msgs::Float32 msg;
+                            msg.data = command_thrust;
+                            command_pub.publish(msg);
+                            prev_dist = pow(d.x(),2) + pow(d.y(),2);
+                        }
+                    }
+                    else if (fabs(sqrt(pow(d.x(),2) + pow(d.y(),2)) - sqrt(prev_dist)) < 1e-3){       // close to the goal at low speed; just align to the goal
+                        tf::StampedTransform t_blimp;
+                        listener.lookupTransform("world", "blimp", last_time, t_blimp);
+                        tf::Matrix3x3 m(t_blimp.getRotation());
+                        double r_blimp, p_blimp, y_blimp;
+                        m.getRPY(r_blimp, p_blimp, y_blimp);
+                        tf::Matrix3x3 m2(transform.getRotation());
+                        double r_turn, p_turn, y_turn;
+                        m2.getRPY(r_turn, p_turn, y_turn);
+                        std_msgs::Float32 msg;
+                        command_yaw = y_blimp + y_turn;
+                        if (command_yaw > PI)
+                            command_yaw -= 2*PI;
+                        else if (command_yaw <= -PI)
+                            command_yaw += 2*PI;
+                        msg.data = command_yaw;
+                        yaw_pub.publish(msg);
+                        pid_thrust.reset();
+                        prev_dist = 1e6;
+                        msg.data = 0;
+                        command_pub.publish(msg);
+                        isWaitingAngle = true;
+                    }
+                    else {
+                        pid_thrust.reset();
+                        prev_dist = 1e6;
+                        std_msgs::Float32 msg;
+                        msg.data = 0;
+                        command_pub.publish(msg);
+                    }
                 }
             }
             catch (tf::TransformException ex){
