@@ -166,7 +166,11 @@ class BlimpController {
                         if (fabs(d.y()) > 0.02) {     // Align x axis to the displacement
                             double y_turn = atan2(d.y(), d.x());
                             std_msgs::Float32 msg;
-                            command_yaw = y_blimp + y_turn;
+                            if (fabs(y_turn) > PI/2){
+                                command_yaw = y_blimp + y_turn - PI;        // Reversed
+                            }else{
+                                command_yaw = y_blimp + y_turn;
+                            }
                             if (command_yaw > PI)
                                 command_yaw -= 2*PI;
                             else if (command_yaw <= -PI)
@@ -191,7 +195,7 @@ class BlimpController {
                             prev_dist = pow(d.x(),2) + pow(d.y(),2);
                         }
                     }
-                    else if (fabs(sqrt(pow(d.x(),2) + pow(d.y(),2)) - sqrt(prev_dist)) < 1e-3){       // close to the goal at low speed; just align to the goal
+                    else if (fabs(sqrt(pow(d.x(),2) + pow(d.y(),2)) - sqrt(prev_dist)) < 1e-4){       // close to the goal at low speed; just align to the goal
                         tf::StampedTransform t_blimp;
                         listener.lookupTransform("world", "blimp", last_time, t_blimp);
                         tf::Matrix3x3 m(t_blimp.getRotation());
@@ -209,14 +213,14 @@ class BlimpController {
                         msg.data = command_yaw;
                         yaw_pub.publish(msg);
                         pid_thrust.reset();
-                        prev_dist = 1e6;
+                        prev_dist = pow(d.x(),2) + pow(d.y(),2);
                         msg.data = 0;
                         command_pub.publish(msg);
                         isWaitingAngle = true;
                     }
                     else {
                         pid_thrust.reset();
-                        prev_dist = 1e6;
+                        prev_dist = pow(d.x(),2) + pow(d.y(),2);
                         std_msgs::Float32 msg;
                         msg.data = 0;
                         command_pub.publish(msg);
