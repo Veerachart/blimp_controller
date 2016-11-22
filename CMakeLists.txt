@@ -10,7 +10,9 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   tf
+  cmake_modules
 )
+find_package(Eigen REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -116,6 +118,7 @@ catkin_package(
 # include_directories(include)
 include_directories(
   ${catkin_INCLUDE_DIRS}
+  ${Eigen_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -131,6 +134,7 @@ include_directories(
 ## Declare a C++ executable
 add_executable(controller_node src/controller.cpp)
 add_executable(simulator_node src/blimp_simulator.cpp)
+add_executable(sim3D_node src/blimp_3dsimulator.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -141,6 +145,9 @@ target_link_libraries(controller_node
   ${catkin_LIBRARIES}
 )
 target_link_libraries(simulator_node
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(sim3D_node
   ${catkin_LIBRARIES}
 )
 
