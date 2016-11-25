@@ -27,6 +27,7 @@ class Blimp{
         float W;        // Gravitational force
         float B;        // Buoyancy force
         float upsi;
+        float e_psi_old;
         ros::Time current;
         ros::Time last;
         tf::TransformListener listener;
@@ -44,10 +45,10 @@ class Blimp{
             V_old = V;
             m = 0.1;
             I = 0.05;
-            X_udot = 0.001;
-            Y_vdot = 0.001;
-            Z_wdot = 0.002;
-            N_rdot = 0.0001;
+            X_udot = -0.01;
+            Y_vdot = -0.01;
+            Z_wdot = -0.02;
+            N_rdot = -0.001;
             M << m-X_udot, 0, 0, 0,
                  0, m-Y_vdot, 0, 0,
                  0, 0, m-Z_wdot, 0,
@@ -56,12 +57,15 @@ class Blimp{
             Y_vv = -0.2;
             Z_ww = -0.5;
             N_rr = -0.2;
+            Vector4f d(-X_uu, -Y_vv, -Z_ww, -N_rr);
+            D = d.asDiagonal();
             W = m*g;
             B = W;
             G << 0, 0, W-B, 0;
             C << Matrix4f::Zero();
             T = Vector4f::Zero();
             upsi = 0;
+            e_psi_old = 0;
             last = ros::Time::now();
             command_sub = nh.subscribe("thrust", 1, &Blimp::thrust_cb, this);
             turn_sub = nh.subscribe("yaw_cmd", 1, &Blimp::turn_cb, this);
@@ -71,11 +75,10 @@ class Blimp{
             current = ros::Time::now();
             C(0,3) = -(m-Y_vdot)*V(1);
             C(1,3) =  (m-X_udot)*V(0);
-            C(3,3) =  (m-Y_vdot)*V(1);
+            C(3,0) =  (m-Y_vdot)*V(1);
             C(3,1) = -(m-X_udot)*V(0);
             
-            Vector4f d(-X_uu*abs(V(0)), -Y_vv*abs(V(1)), -Z_ww*abs(V(2)), -N_rr*abs(V(3)));
-            D = d.asDiagonal();
+            
             
             J << cos(X(3)), -sin(X(3)), 0, 0,
                  sin(X(3)),  cos(X(3)), 0, 0,
@@ -84,7 +87,8 @@ class Blimp{
             
             // rotation
             float e_psi = upsi - X(3);
-            T(3) = 0.03*e_psi;
+            T(3) = 0.05*e_psi + 0.025/(current-last).toSec() * (e_psi-e_psi_old);
+            e_psi_old = e_psi;
             V_dot = M.inverse() * (T - C*V - D*V);
             V = V + V_dot*(current-last).toSec();
             X_dot = J*V;
