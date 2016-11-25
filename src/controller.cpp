@@ -8,6 +8,7 @@
 #include <vector>
 #include <algorithm>
 #include <std_msgs/Float32.h>
+#include <geometry_msgs/Wrench.h>
 #include <std_msgs/Int16.h>
 
 const double PI = 3.141592653589793;
@@ -52,7 +53,6 @@ class PID {
             
             // TODO saturation
 
-            ROS_INFO("%f, %f", dt, current_u);
             // Store data as previous
             prev_u = current_u;
             prev_e_2 = prev_e_1;
@@ -82,39 +82,40 @@ class BlimpController {
         dynamic_reconfigure::Server<blimp_controller::ControllerConfig>::CallbackType f;
         tf::TransformListener listener;
         PID pid_thrust;
+        PID pid_z;
         float command_thrust;
+        float command_lift;
         float command_yaw;
         ros::Publisher command_pub;
-        ros::Publisher yaw_pub;
         ros::Publisher state_pub;
         bool isManual;
-        bool isWaitingAngle;
         tf::TransformBroadcaster br;
         tf::Transform transform;
         tf::Vector3 goal;
         tf::Quaternion q;
         short int state;        // 0 = Stop; 1 = Turn; 2 = Move
         float prev_dist;
+        float prev_z;
         float prev_angle;
-        std_msgs::Float32 msg;
+        geometry_msgs::Wrench msg;
     public:
         BlimpController(ros::NodeHandle &node_)
         {
             nh_ = node_;
             f = boost::bind(&BlimpController::callback, this, _1, _2);
             server.setCallback(f);
-            pid_thrust.tune_pid(0.02, 0.0, 0.15);
-            command_pub = nh_.advertise<std_msgs::Float32>("thrust",1);
-            yaw_pub = nh_.advertise<std_msgs::Float32>("yaw_cmd",1);
+            pid_thrust.tune_pid(0.1, 0.0, 0.01);
+            pid_z.tune_pid(0.2, 0.0, 0.01);
+            command_pub = nh_.advertise<geometry_msgs::Wrench>("cmd",1);
             state_pub = nh_.advertise<std_msgs::Int16>("state",1);
             isManual = true;
-            isWaitingAngle = false;
             goal = tf::Vector3(0.0,0.0,0.0);
             q.setRPY(0.0, 0.0, 0.0);
             transform.setOrigin(goal);
             transform.setRotation(q);
             state = 0;
             prev_dist = 1e6;
+            prev_z = 1e6;
             prev_angle = -2*PI;
         }
         void callback(blimp_controller::ControllerConfig &config, uint32_t level){
@@ -123,8 +124,8 @@ class BlimpController {
             isManual = config.manual;
             transform.setOrigin(goal);
             transform.setRotation(q);
-            pid_thrust.tune_pid((float)config.groups.pid.p, (float)config.groups.pid.i, (float)config.groups.pid.d);
-            isWaitingAngle = false;
+            pid_thrust.tune_pid((float)config.groups.pid_th.p_th, (float)config.groups.pid_th.i_th, (float)config.groups.pid_th.d_th);
+            pid_z.tune_pid((float)config.groups.pid_z.p_z, (float)config.groups.pid_z.i_z, (float)config.groups.pid_z.d_z);
         }
         
         void publish(){
@@ -148,10 +149,13 @@ class BlimpController {
                     if (ros::Time::now()-last_time > ros::Duration(1))
                     {
                         pid_thrust.reset();
+                        pid_z.reset();
                         prev_dist = 1e6;
+                        prev_z = 1e6;
                         prev_angle = -2*PI;
-                        std_msgs::Float32 msg;
-                        msg.data = 0;
+                        msg.force.x = 0;
+                        msg.force.z = 0;
+                        msg.torque.z = 0;
                         command_pub.publish(msg);
                         return;         // Too old
                     }
@@ -166,8 +170,6 @@ class BlimpController {
                     
                     switch (state) {
                         case 0:         // Stop
-                            // Positioning algorithm
-                            
                             // Check transition condition
                             
                             if (pow(d.x(),2) + pow(d.y(),2) > 1.0e-4) {
@@ -183,13 +185,20 @@ class BlimpController {
                                     else if (command_yaw <= -PI)
                                         command_yaw += 2*PI;
                                     command_thrust = 0;
+                                    command_lift = 0;
                                     pid_thrust.reset();
                                     state = 1;
                                 }
                                 else {
                                     pid_thrust.reset();
+                                    pid_z.reset();
                                     state = 2;
                                 }
+                            }
+                            else if (fabs(d.z()) > 0.01) {          // Need to go up/down only
+                                pid_thrust.reset();
+                                pid_z.reset();
+                                state = 2;
                             }
                             else {
                                 tf::Matrix3x3 m2(transform.getRotation());
@@ -203,41 +212,59 @@ class BlimpController {
                                         command_yaw += 2*PI;
                                     command_thrust = 0;
                                     pid_thrust.reset();
+                                    pid_z.reset();
                                     state = 1;
                                 }
+                                else {
+                                    // Positioning algorithm
+                                    command_thrust = pid_thrust.update(d.x());
+                                    command_lift = pid_z.update(d.z());
+                                    msg.torque.z = command_yaw;
+                                    msg.force.x = command_thrust;
+                                    msg.force.z = command_lift;
+                                    command_pub.publish(msg);
+                                }
                             }
+                            
                             break;
                                 
                         case 1:         // Turn
-                            // Turning algorithm
-                            msg.data = command_yaw;
-                            yaw_pub.publish(msg);
-                            msg.data = command_thrust;
-                            command_pub.publish(msg);
-                            
                             // Check transition condition
                             if (fabs(y_blimp - command_yaw) <= 0.02 && fabs(y_blimp - prev_angle) <= 1e-3) {
                                 // Good alignment and already at low turning speed --> Stop
                                 state = 0;
                             }
+                            else {
+                                // Turning algorithm
+                                msg.torque.z = command_yaw;
+                                msg.force.x = command_thrust;
+                                msg.force.z = command_lift;
+                                command_pub.publish(msg);
+                            }
+                            
                             pid_thrust.reset();
+                            pid_z.reset();
                             break;
                             
                         case 2:         // Move
-                            // Moving algorithm
-                            command_thrust = pid_thrust.update(d.x());
-                            msg.data = command_thrust;
-                            command_pub.publish(msg);
-                            
                             // Check transition condition
-                            if (d.x() <= 0.01 &&  fabs(sqrt(pow(d.x(),2) + pow(d.y(),2)) - sqrt(prev_dist)) <= 1e-4) {
+                            if (fabs(d.x()) <= 0.01 && fabs(d.z()) <= 0.01 && fabs(sqrt(pow(d.x(),2) + pow(d.y(),2)) - sqrt(prev_dist)) <= 1e-4 && fabs(d.z() - prev_z) <= 1e-4) {
                                 // Close and stop --> Stop
                                 state = 0;
                             }
-                            pid_thrust.reset();
+                            else {
+                                // Moving algorithm
+                                command_thrust = pid_thrust.update(d.x());
+                                command_lift = pid_z.update(d.z());
+                                msg.torque.z = command_yaw;
+                                msg.force.x = command_thrust;
+                                msg.force.z = command_lift;
+                                command_pub.publish(msg);
+                            }
                             break;
                     }
                     prev_dist = pow(d.x(),2) + pow(d.y(),2);
+                    prev_z = d.z();
                     prev_angle = y_blimp;
                 }
             }
