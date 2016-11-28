@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="uri" default="radio://0/80/250k" />
+  
+  <include file="$(find crazyflie_driver)/launch/crazyflie_server.launch">
+  </include>
+  
+  <group ns="blimp">
+    <!--<param name="crazyflie/pid_rate/yaw_kp" value="200"/>-->
+    <include file="$(find crazyflie_driver)/launch/crazyflie_add.launch">
+      <arg name="uri" value="$(arg uri)" />
+      <arg name="tf_prefix" value="blimp" />
+    </include>
+    
+    <node name="blimp_controller" pkg="blimp_controller" type="controller_node"> </node>
+    
+    <node name="blimp_sim" pkg="blimp_controller" type="sim3D_node"> </node>
+  </group>
+  
+  <node name="dynamic_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>
+  
+</launch>
+    
