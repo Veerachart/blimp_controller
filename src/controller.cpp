@@ -8,7 +8,7 @@
 #include <vector>
 #include <algorithm>
 #include <std_msgs/Float32.h>
-#include <geometry_msgs/Wrench.h>
+#include <geometry_msgs/Twist.h>
 #include <std_msgs/Int16.h>
 
 const double PI = 3.141592653589793;
@@ -97,7 +97,7 @@ class BlimpController {
         float prev_dist;
         float prev_z;
         float prev_angle;
-        geometry_msgs::Wrench msg;
+        geometry_msgs::Twist msg;
     public:
         BlimpController(ros::NodeHandle &node_)
         {
@@ -106,7 +106,7 @@ class BlimpController {
             server.setCallback(f);
             pid_thrust.tune_pid(0.1, 0.0, 0.01);
             pid_z.tune_pid(0.2, 0.0, 0.01);
-            command_pub = nh_.advertise<geometry_msgs::Wrench>("cmd",1);
+            command_pub = nh_.advertise<geometry_msgs::Twist>("cmd_vel",1);
             state_pub = nh_.advertise<std_msgs::Int16>("state",1);
             isManual = true;
             goal = tf::Vector3(0.0,0.0,0.0);
@@ -153,9 +153,9 @@ class BlimpController {
                         prev_dist = 1e6;
                         prev_z = 1e6;
                         prev_angle = -2*PI;
-                        msg.force.x = 0;
-                        msg.force.z = 0;
-                        msg.torque.z = 0;
+                        msg.linear.x = 0;
+                        msg.linear.z = 0;
+                        msg.angular.z = 0;
                         command_pub.publish(msg);
                         return;         // Too old
                     }
@@ -219,9 +219,9 @@ class BlimpController {
                                     // Positioning algorithm
                                     command_thrust = pid_thrust.update(d.x());
                                     command_lift = pid_z.update(d.z());
-                                    msg.torque.z = command_yaw;
-                                    msg.force.x = command_thrust;
-                                    msg.force.z = command_lift;
+                                    msg.angular.z = command_yaw;
+                                    msg.linear.x = command_thrust;
+                                    msg.linear.z = command_lift;
                                     command_pub.publish(msg);
                                 }
                             }
@@ -236,9 +236,9 @@ class BlimpController {
                             }
                             else {
                                 // Turning algorithm
-                                msg.torque.z = command_yaw;
-                                msg.force.x = command_thrust;
-                                msg.force.z = command_lift;
+                                msg.angular.z = command_yaw;
+                                msg.linear.x = command_thrust;
+                                msg.linear.z = command_lift;
                                 command_pub.publish(msg);
                             }
                             
@@ -256,9 +256,9 @@ class BlimpController {
                                 // Moving algorithm
                                 command_thrust = pid_thrust.update(d.x());
                                 command_lift = pid_z.update(d.z());
-                                msg.torque.z = command_yaw;
-                                msg.force.x = command_thrust;
-                                msg.force.z = command_lift;
+                                msg.angular.z = command_yaw;
+                                msg.linear.x = command_thrust;
+                                msg.linear.z = command_lift;
                                 command_pub.publish(msg);
                             }
                             break;
