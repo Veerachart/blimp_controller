@@ -2,7 +2,7 @@
 #include <math.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
-#include <geometry_msgs/Wrench.h>
+#include <geometry_msgs/Twist.h>
 #include <Eigen/Core>
 #include <Eigen/Dense>
 
@@ -67,7 +67,7 @@ class Blimp{
             upsi = 0;
             e_psi_old = 0;
             last = ros::Time::now();
-            command_sub = nh.subscribe("cmd", 1, &Blimp::command_cb, this);
+            command_sub = nh.subscribe("cmd_vel", 1, &Blimp::command_cb, this);
         }
         
         void update (){
@@ -103,10 +103,10 @@ class Blimp{
             broadcaster.sendTransform(tf::StampedTransform(transform, ros::Time::now(),"world","blimp"));
         }
         
-        void command_cb(const geometry_msgs::Wrench::ConstPtr& msg){
-            T(0) = msg->force.x;
-            T(2) = msg->force.z;
-            upsi = msg->torque.z;
+        void command_cb(const geometry_msgs::Twist::ConstPtr& msg){
+            T(0) = msg->linear.x;
+            T(2) = msg->linear.z;
+            upsi = msg->angular.z;
         }
 };
 
