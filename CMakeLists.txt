@@ -133,6 +133,7 @@ include_directories(
 
 ## Declare a C++ executable
 add_executable(controller_node src/controller.cpp)
+add_executable(controller_path src/controller_path_gen.cpp)
 add_executable(simulator_node src/blimp_simulator.cpp)
 add_executable(sim3D_node src/blimp_3dsimulator.cpp)
 
@@ -142,6 +143,9 @@ add_executable(sim3D_node src/blimp_3dsimulator.cpp)
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(controller_node
+  ${catkin_LIBRARIES}
+)
+target_link_libraries(controller_path
   ${catkin_LIBRARIES}
 )
 target_link_libraries(simulator_node

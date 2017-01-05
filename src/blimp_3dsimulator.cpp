@@ -53,12 +53,10 @@ class Blimp{
                  0, m-Y_vdot, 0, 0,
                  0, 0, m-Z_wdot, 0,
                  0, 0, 0, I-N_rdot;
-            X_uu = -0.2;
-            Y_vv = -0.2;
-            Z_ww = -0.5;
-            N_rr = -0.2;
-            Vector4f d(-X_uu, -Y_vv, -Z_ww, -N_rr);
-            D = d.asDiagonal();
+            X_uu = 0.02;
+            Y_vv = 0.02;
+            Z_ww = 0.05;
+            N_rr = 0.02;
             W = m*g;
             B = W;
             G << 0, 0, W-B, 0;
@@ -86,8 +84,10 @@ class Blimp{
             
             // rotation
             float e_psi = upsi - X(3);
-            T(3) = 0.05*e_psi + 0.025/(current-last).toSec() * (e_psi-e_psi_old);
+            T(3) = 0.002*e_psi + 0.05/(current-last).toSec() * (e_psi-e_psi_old);
             e_psi_old = e_psi;
+            Vector4f d(-X_uu*abs(V(0)), -Y_vv*abs(V(1)), -Z_ww*abs(V(2)), -N_rr*abs(V(3)));
+            D = d.asDiagonal();
             V_dot = M.inverse() * (T - C*V - D*V);
             V = V + V_dot*(current-last).toSec();
             X_dot = J*V;
