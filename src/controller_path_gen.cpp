@@ -99,6 +99,7 @@ class BlimpController {
         bool isManual;
         float command_yaw;
         float command_thrust;
+        float command_lift;
         ros::Publisher command_pub;
         geometry_msgs::Twist msg;
         
@@ -115,19 +116,23 @@ class BlimpController {
         
         unsigned int state;             // 0 = at goal, 1 = align, 2 = move, 3 = turn
         
-        float a_max, v_max;             // limit of movement for path generation
+        float a_max_h, v_max_h;         // limit of movement for path generation
+        float a_max_z, v_max_z;
         float alpha_max, omega_max;     // limit of rotation
         float t_rise;                   // rising time of acceleration
-        float t_const;                  // time of constant velocity
+        float t_const_h, t_const_z;     // time of constant velocity, horizontal and vertical
+        float t_const;                  // rotation
         
         float yaw_1, yaw_2;             // yaw_1 for rotate before move, yaw_2 for rotate after move
-        float distance;                 // distance to move
+        float distance_h, distance_z;   // distance to move
         
         ros::Time t_start;
         float t_old;
-        float a_old, v_old;
+        float a_old_h, v_old_h;
+        float a_old_z, v_old_z;
         float alpha_old, omega_old;
-        float a, v, x;
+        float a_h, v_h, x;
+        float a_z, v_z, z;
         float alpha, omega;
         
         tf::Vector3 d_blimp;
@@ -141,12 +146,19 @@ class BlimpController {
             server.setCallback(f);
             command_pub = nh_.advertise<geometry_msgs::Twist>("cmd_vel",1);
             state = 0;
+            x = 0;
+            z = 0;
             t_rise = 2.0;
             pid_thrust.tune_pid(0.006, 0.0, 1.0);
-            goal_x, goal_y, goal_z, goal_yaw = 0;
+            pid_z.tune_pid(0.005, 0.0, 1.0);
+            goal_x = 0;
+            goal_y = 0;
+            goal_z = 0;
+            goal_yaw = 0;
             final_goal.setOrigin(tf::Vector3(goal_x, goal_y, goal_z));
             q.setRPY(0.0, 0.0, goal_yaw*PI/180.0);
             final_goal.setRotation(q);
+            ROS_INFO("%.2f, %.2f, %.2f", x, v_h, a_h);
         }
         
         void callback(blimp_controller::ControllerConfig &config, uint32_t level){
@@ -184,10 +196,10 @@ class BlimpController {
                     {
                         pid_thrust.reset();
                         pid_z.reset();
-                        //msg.linear.x = 0;
-                        //msg.linear.z = 0;
-                        //msg.angular.z = 0;
-                        //command_pub.publish(msg);
+                        msg.linear.x = 0;
+                        msg.linear.z = 0;
+                        msg.angular.z = 0;
+                        command_pub.publish(msg);
                         return;         // Too old
                     }
                     listener.lookupTransform("world", "blimp", last_time, current);
@@ -229,8 +241,10 @@ class BlimpController {
                                 
                                 alpha_old = 0;
                                 omega_old = 0;
-                                a_old = 0;
-                                v_old = 0;
+                                a_old_h = 0;
+                                v_old_h = 0;
+                                a_old_z = 0;
+                                v_old_z = 0;
                                 if (yaw_1 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
                                     alpha_max = ALPHA_MAX*PI/180.0;
                                     t_const = (yaw_1 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
@@ -245,24 +259,37 @@ class BlimpController {
                                 }
                                 state = 1;
                             }
-                            else if (pow(d.x(),2) + pow(d.y(),2) > 0.1) {
-                                distance = sqrt(pow(d.x(),2) + pow(d.y(),2));
-                                if (distance > 2*A_MAX*t_rise*t_rise) {
-                                    a_max = A_MAX;
-                                    t_const = (distance - 2*a_max*t_rise*t_rise)/(a_max*t_rise);
-                                    state = 2;
+                            else if (sqrt(pow(d.x(),2) + pow(d.y(),2)) > 0.1 || d.z() > 0.1) {
+                                distance_h = sqrt(pow(d.x(),2) + pow(d.y(),2));
+                                distance_z = d.z();
+                                if (distance_h > 2*A_MAX*t_rise*t_rise) {
+                                    a_max_h = A_MAX;
+                                    t_const_h = (distance_h - 2*a_max_h*t_rise*t_rise)/(a_max_h*t_rise);
                                 }
-                                else if (distance < -2*A_MAX*t_rise*t_rise) {
-                                    a_max = -A_MAX;
-                                    t_const = (distance - 2*a_max*t_rise*t_rise)/(a_max*t_rise);
-                                    state = 2;
+                                else if (distance_h < -2*A_MAX*t_rise*t_rise) {
+                                    a_max_h = -A_MAX;
+                                    t_const_h = (distance_h - 2*a_max_h*t_rise*t_rise)/(a_max_h*t_rise);
                                 }
                                 else{
-                                    a_max = distance/(2*t_rise*t_rise);
-                                    t_const = 0;
-                                    state = 2;
+                                    a_max_h = distance_h/(2*t_rise*t_rise);
+                                    t_const_h = 0;
                                 }
+                                
+                                if (distance_z > 2*A_MAX*t_rise*t_rise) {
+                                    a_max_z = A_MAX;
+                                    t_const_z = (distance_z - 2*a_max_z*t_rise*t_rise)/(a_max_z*t_rise);
+                                }
+                                else if (distance_z < -2*A_MAX*t_rise*t_rise) {
+                                    a_max_z = -A_MAX;
+                                    t_const_z = (distance_z - 2*a_max_z*t_rise*t_rise)/(a_max_z*t_rise);
+                                }
+                                else{
+                                    a_max_z = distance_z/(2*t_rise*t_rise);
+                                    t_const_z = 0;
+                                }
+                                ROS_INFO("%.3f", a_max_z);
                                 pid_thrust.reset();
+                                pid_z.reset();
                                 state = 2;
                                 
                                 move_origin = current;
@@ -280,22 +307,30 @@ class BlimpController {
                                     
                                 alpha_old = 0;
                                 omega_old = 0;
-                                a_old = 0;
-                                v_old = 0;
-                                if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
-                                    alpha_max = ALPHA_MAX*PI/180.0;
-                                    t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
+                                a_old_h = 0;
+                                v_old_h = 0;
+                                a_old_z = 0;
+                                v_old_z = 0;
+                                if (fabs(yaw_2) > PI/18.0) {
+                                    if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
+                                        alpha_max = ALPHA_MAX*PI/180.0;
+                                        t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
+                                    }
+                                    else if (yaw_2 < -2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
+                                        alpha_max = -ALPHA_MAX*PI/180.0;
+                                        t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
+                                    }
+                                    else{
+                                        alpha_max = yaw_2/(2*t_rise*t_rise);
+                                        t_const = 0;
+                                    }
+                                
+                                    state = 3;
                                 }
-                                else if (yaw_2 < -2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
-                                    alpha_max = -ALPHA_MAX*PI/180.0;
-                                    t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
+                                else {
+                                    t_old = 0;
+                                    state = 0;
                                 }
-                                else{
-                                    alpha_max = yaw_2/(2*t_rise*t_rise);
-                                    t_const = 0;
-                                }
-                            
-                                state = 3;
                             }
                         }
                         else {
@@ -328,9 +363,10 @@ class BlimpController {
                                         tf::StampedTransform translation;
                                         listener.lookupTransform("blimp", "goal", ros::Time(0), translation);
                                         d = translation.getOrigin();
-                                        distance = d.x();
+                                        distance_h = d.x();
+                                        distance_z = d.z();
                                         
-                                        if (fabs(distance) < 0.1) {
+                                        if (fabs(distance_h) < 0.1 && fabs(distance_z) < 0.1) {
                                             yaw_2 = goal_yaw*PI/180.0 - y_blimp;
                                             if (yaw_2 > PI)
                                                 yaw_2 = yaw_2 - 2*PI;
@@ -340,8 +376,10 @@ class BlimpController {
                                                 
                                             alpha_old = 0;
                                             omega_old = 0;
-                                            a_old = 0;
-                                            v_old = 0;
+                                            a_old_h = 0;
+                                            v_old_h = 0;
+                                            a_old_z = 0;
+                                            v_old_z = 0;
                                             if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
                                                 alpha_max = ALPHA_MAX*PI/180.0;
                                                 t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
@@ -356,26 +394,40 @@ class BlimpController {
                                             }
                                             state = 3;
                                         }
-                                        else if (distance > 2*A_MAX*t_rise*t_rise) {
-                                            a_max = A_MAX;
-                                            t_const = (distance - 2*a_max*t_rise*t_rise)/(a_max*t_rise);
+                                        else {
+                                            if (distance_h > 2*A_MAX*t_rise*t_rise) {
+                                                a_max_h = A_MAX;
+                                                t_const_h = (distance_h - 2*a_max_h*t_rise*t_rise)/(a_max_h*t_rise);
+                                            }
+                                            else if (distance_h < -2*A_MAX*t_rise*t_rise) {
+                                                a_max_h = -A_MAX;
+                                                t_const_h = (distance_h - 2*a_max_h*t_rise*t_rise)/(a_max_h*t_rise);
+                                            }
+                                            else{
+                                                a_max_h = distance_h/(2*t_rise*t_rise);
+                                                t_const_h = 0;
+                                            }
+                                            if (distance_z > 2*A_MAX*t_rise*t_rise) {
+                                                a_max_z = A_MAX;
+                                                t_const_z = (distance_z - 2*a_max_z*t_rise*t_rise)/(a_max_z*t_rise);
+                                            }
+                                            else if (distance_z < -2*A_MAX*t_rise*t_rise) {
+                                                a_max_z = -A_MAX;
+                                                t_const_z = (distance_z - 2*a_max_z*t_rise*t_rise)/(a_max_z*t_rise);
+                                            }
+                                            else{
+                                                a_max_z = distance_z/(2*t_rise*t_rise);
+                                                t_const_z = 0;
+                                            }
+                                            ROS_INFO("%.3f", a_max_z);
+                                            pid_thrust.reset();
+                                            pid_z.reset();
+                                            t_old = 0;
                                             state = 2;
+                                            move_origin = current;
+                                
+                                            br.sendTransform(tf::StampedTransform(move_origin, ros::Time::now(), "world", "start"));
                                         }
-                                        else if (distance < -2*A_MAX*t_rise*t_rise) {
-                                            a_max = -A_MAX;
-                                            t_const = (distance - 2*a_max*t_rise*t_rise)/(a_max*t_rise);
-                                            state = 2;
-                                        }
-                                        else{
-                                            a_max = distance/(2*t_rise*t_rise);
-                                            t_const = 0;
-                                            state = 2;
-                                        }
-                                        pid_thrust.reset();
-                                        t_old = 0;
-                                        move_origin = current;
-                            
-                                        br.sendTransform(tf::StampedTransform(move_origin, ros::Time::now(), "world", "start"));
                                         break;
                                     }
                                 }
@@ -392,63 +444,88 @@ class BlimpController {
                                 listener.lookupTransform("start", "blimp", ros::Time(0), blimp);
                                 
                                 if (t < t_rise)
-                                    a = a_old + a_max/t_rise*delta_t;
+                                    a_h = a_old_h + a_max_h/t_rise*delta_t;
                                 else if (t < 2*t_rise)
-                                    a = a_old - a_max/t_rise*delta_t;
-                                else if (t < 2*t_rise + t_const)
-                                    a = 0;
-                                else if (t < 3*t_rise + t_const)
-                                    a = a_old - a_max/t_rise*delta_t;
-                                else if (t < 4*t_rise + t_const)
-                                    a = a_old + a_max/t_rise*delta_t;
-                                else{
-                                    a = 0;
-                                    if (t - (4*t_rise + t_const) > 2.0) {       // Wait 2.0 s
-                                        t_start = t_start + ros::Duration(t);
-                                        
-                                        yaw_2 = goal_yaw*PI/180.0 - y_blimp;
-                                        if (yaw_2 > PI)
-                                            yaw_2 = yaw_2 - 2*PI;
-                                        else if (yaw_2 <= -PI)
-                                            yaw_2 = yaw_2 + 2*PI;
-                                        ROS_INFO("%.2f", yaw_2*180/PI);
-                                            
-                                        alpha_old = 0;
-                                        omega_old = 0;
-                                        a_old = 0;
-                                        v_old = 0;
-                                        v = 0;
-                                        x = 0;
-                                        if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
-                                            alpha_max = ALPHA_MAX*PI/180.0;
-                                            t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
-                                        }
-                                        else if (yaw_2 < -2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
-                                            alpha_max = -ALPHA_MAX*PI/180.0;
-                                            t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
-                                        }
-                                        else{
-                                            alpha_max = yaw_2/(2*t_rise*t_rise);
-                                            t_const = 0;
-                                        }
-                                        command_thrust = 0;
-                                        t_old = 0;
-                                        if (fabs(yaw_2) < PI/(180.0*5))
-                                            state = 0;
-                                        else
-                                            state = 3;
-                                        break;
-                                    }
-                                }
-                                v = v_old + (a_old+a)/2*delta_t;
-                                x = x + (v_old+v)/2*delta_t;
+                                    a_h = a_old_h - a_max_h/t_rise*delta_t;
+                                else if (t < 2*t_rise + t_const_h)
+                                    a_h = 0;
+                                else if (t < 3*t_rise + t_const_h)
+                                    a_h = a_old_h - a_max_h/t_rise*delta_t;
+                                else if (t < 4*t_rise + t_const_h)
+                                    a_h = a_old_h + a_max_h/t_rise*delta_t;
+                                else
+                                    a_h = 0;
                                 
-                                a_old = a;
-                                v_old = v;
+                                if (t < t_rise)
+                                    a_z = a_old_z + a_max_z/t_rise*delta_t;
+                                else if (t < 2*t_rise)
+                                    a_z = a_old_z - a_max_z/t_rise*delta_t;
+                                else if (t < 2*t_rise + t_const_z)
+                                    a_z = 0;
+                                else if (t < 3*t_rise + t_const_z)
+                                    a_z = a_old_z - a_max_z/t_rise*delta_t;
+                                else if (t < 4*t_rise + t_const_z)
+                                    a_z = a_old_z + a_max_z/t_rise*delta_t;
+                                else
+                                    a_z = 0;
+                                
+                                if (t - (4*t_rise + std::max(t_const_h, t_const_z)) > 3.0) {       // Wait 3.0 s
+                                    t_start = t_start + ros::Duration(t);
+                                    
+                                    yaw_2 = goal_yaw*PI/180.0 - y_blimp;
+                                    if (yaw_2 > PI)
+                                        yaw_2 = yaw_2 - 2*PI;
+                                    else if (yaw_2 <= -PI)
+                                        yaw_2 = yaw_2 + 2*PI;
+                                    ROS_INFO("%.2f", yaw_2*180/PI);
+                                        
+                                    alpha_old = 0;
+                                    omega_old = 0;
+                                    a_old_h = 0;
+                                    v_old_h = 0;
+                                    v_h = 0;
+                                    x = 0;
+                                    a_old_z = 0;
+                                    v_old_z = 0;
+                                    v_z = 0;
+                                    z = 0;
+                                    
+                                    if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
+                                        alpha_max = ALPHA_MAX*PI/180.0;
+                                        t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
+                                    }
+                                    else if (yaw_2 < -2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
+                                        alpha_max = -ALPHA_MAX*PI/180.0;
+                                        t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
+                                    }
+                                    else{
+                                        alpha_max = yaw_2/(2*t_rise*t_rise);
+                                        t_const = 0;
+                                    }
+                                    command_thrust = 0;
+                                    command_lift = 0;
+                                    t_old = 0;
+                                    if (fabs(yaw_2) < PI/(180.0*5))
+                                        state = 0;
+                                    else
+                                        state = 3;
+                                    break;
+                                }
+                                v_h = v_old_h + (a_old_h+a_h)/2*delta_t;
+                                x = x + (v_old_h+v_h)/2*delta_t;
+                                v_z = v_old_z + (a_old_z+a_z)/2*delta_t;
+                                z = z + (v_old_z+v_z)/2*delta_t;
+                                
+                                a_old_h = a_h;
+                                v_old_h = v_h;
+                                a_old_z = a_z;
+                                v_old_z = v_z;
                                 t_old = t;
                                 
                                 command_thrust = pid_thrust.update(x-blimp.getOrigin().x());
+                                command_lift = pid_z.update(z-blimp.getOrigin().z());
                                 msg.linear.x = command_thrust;
+                                msg.linear.z = command_lift;
                                 break;
                             case 3:
                                 if (t < t_rise)
@@ -463,7 +540,7 @@ class BlimpController {
                                     alpha = alpha_old + alpha_max/t_rise*delta_t;
                                 else{
                                     alpha = 0;
-                                    if (t - (4*t_rise + t_const) > 2.0) {       // Wait 2.0 s
+                                    if (t - (4*t_rise + t_const) > 3.0) {       // Wait 3.0 s
                                         t_old = 0;
                                         state = 0;
                                         break;
