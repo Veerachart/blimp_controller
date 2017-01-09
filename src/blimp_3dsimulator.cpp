@@ -84,7 +84,7 @@ class Blimp{
             
             // rotation
             float e_psi = upsi - X(3);
-            T(3) = 0.002*e_psi + 0.05/(current-last).toSec() * (e_psi-e_psi_old);
+            T(3) = 0.0025*e_psi + 0.08/(current-last).toSec() * (e_psi-e_psi_old);
             e_psi_old = e_psi;
             Vector4f d(-X_uu*abs(V(0)), -Y_vv*abs(V(1)), -Z_ww*abs(V(2)), -N_rr*abs(V(3)));
             D = d.asDiagonal();

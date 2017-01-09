@@ -85,6 +85,10 @@ class PID {
             D = 0;
             last = ros::Time::now();
         }
+        
+        void print_PID() {
+            ROS_INFO("%.3f, %.3f, %.3f", current_e, prev_e, D);
+        }
 };
 
 class BlimpController {
@@ -114,7 +118,7 @@ class BlimpController {
         tf::Quaternion q;
         ros::Time goal_update;
         
-        unsigned int state;             // 0 = at goal, 1 = align, 2 = move, 3 = turn
+        unsigned int state;             // 0 = at goal, 1 = align, 2 = move, 3 = turn, 4 = break rotation, 5 = break translation
         
         float a_max_h, v_max_h;         // limit of movement for path generation
         float a_max_z, v_max_z;
@@ -137,6 +141,7 @@ class BlimpController {
         
         tf::Vector3 d_blimp;
         tf::Vector3 d;
+        float time_brake;
         
     public:
         BlimpController(ros::NodeHandle &node_)
@@ -245,6 +250,8 @@ class BlimpController {
                                 v_old_h = 0;
                                 a_old_z = 0;
                                 v_old_z = 0;
+                                x = 0;
+                                z = 0;
                                 if (yaw_1 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
                                     alpha_max = ALPHA_MAX*PI/180.0;
                                     t_const = (yaw_1 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
@@ -311,6 +318,8 @@ class BlimpController {
                                 v_old_h = 0;
                                 a_old_z = 0;
                                 v_old_z = 0;
+                                x = 0;
+                                z = 0;
                                 if (fabs(yaw_2) > PI/18.0) {
                                     if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
                                         alpha_max = ALPHA_MAX*PI/180.0;
@@ -333,8 +342,15 @@ class BlimpController {
                                 }
                             }
                         }
-                        else {
+                        else if (state == 1 || state == 3) {
                             state = 4;
+                            time_brake = t_old;
+                            ROS_INFO("%.6f", time_brake);
+                        }
+                        else if (state == 2) {
+                            state = 5;
+                            time_brake = t_old;
+                            ROS_INFO("%.6f", time_brake);
                         }
                     }
                     else {      // Progress with the previous path planning
@@ -343,19 +359,33 @@ class BlimpController {
                         float delta_t = t-t_old;
                         tf::StampedTransform blimp;
                         ROS_INFO("%d", state);
+                        float condition_h, condition_z;
                         
                         switch (state) {
                             case 1:
-                                if (t < t_rise)
+                                if (t < t_rise + 1e-3) {
                                     alpha = alpha_old + alpha_max/t_rise*delta_t;
-                                else if (t < 2*t_rise)
+                                    if (fabs(t-t_rise) <= 1e-3)
+                                        alpha = alpha_max;
+                                }
+                                else if (t < 2*t_rise + 1e-3) {
                                     alpha = alpha_old - alpha_max/t_rise*delta_t;
-                                else if (t < 2*t_rise + t_const)
+                                    if (fabs(t-2*t_rise) <= 1e-3)
+                                        alpha = 0;
+                                }
+                                else if (t < 2*t_rise + t_const + 1e-3) {
                                     alpha = 0;
-                                else if (t < 3*t_rise + t_const)
+                                }
+                                else if (t < 3*t_rise + t_const + 1e-3) {
                                     alpha = alpha_old - alpha_max/t_rise*delta_t;
-                                else if (t < 4*t_rise + t_const)
+                                    if (fabs(t-3*t_rise-t_const) <= 1e-3)
+                                        alpha = -alpha_max;
+                                }
+                                else if (t < 4*t_rise + t_const + 1e-3) {
                                     alpha = alpha_old + alpha_max/t_rise*delta_t;
+                                    if (fabs(t-4*t_rise-t_const) <= 1e-3)
+                                        alpha = 0;
+                                }
                                 else{
                                     alpha = 0;
                                     if (t - (4*t_rise + t_const) > 3.0) {       // Wait 3.0 s
@@ -380,6 +410,8 @@ class BlimpController {
                                             v_old_h = 0;
                                             a_old_z = 0;
                                             v_old_z = 0;
+                                            x = 0;
+                                            z = 0;
                                             if (yaw_2 > 2*ALPHA_MAX*t_rise*t_rise*PI/180.0) {
                                                 alpha_max = ALPHA_MAX*PI/180.0;
                                                 t_const = (yaw_2 - 2*alpha_max*t_rise*t_rise)/(alpha_max*t_rise);
@@ -438,36 +470,66 @@ class BlimpController {
                                 omega_old = omega;
                                 t_old = t;
                                 msg.angular.z = command_yaw;
+                                
+                                ROS_INFO("t = %2.6f, alpha = %1.6f, omega = %1.6f, yaw = %2.6f", t, alpha, omega, command_yaw);
                                 break;
                             case 2:
                                 br.sendTransform(tf::StampedTransform(move_origin, ros::Time::now(), "world", "start"));
                                 listener.lookupTransform("start", "blimp", ros::Time(0), blimp);
                                 
-                                if (t < t_rise)
+                                if (t < t_rise + 1e-3) {
                                     a_h = a_old_h + a_max_h/t_rise*delta_t;
-                                else if (t < 2*t_rise)
+                                    if (fabs(t-t_rise) <= 1e-3)
+                                        a_h = a_max_h;
+                                }
+                                else if (t < 2*t_rise + 1e-3) {
                                     a_h = a_old_h - a_max_h/t_rise*delta_t;
-                                else if (t < 2*t_rise + t_const_h)
+                                    if (fabs(t-2*t_rise) <= 1e-3)
+                                        a_h = 0;
+                                }
+                                else if (t < 2*t_rise + t_const_h + 1e-3) {
                                     a_h = 0;
-                                else if (t < 3*t_rise + t_const_h)
+                                }
+                                else if (t < 3*t_rise + t_const_h + 1e-3) {
                                     a_h = a_old_h - a_max_h/t_rise*delta_t;
-                                else if (t < 4*t_rise + t_const_h)
+                                    if (fabs(t-3*t_rise-t_const_h) <= 1e-3)
+                                        a_h = -a_max_h;
+                                }
+                                else if (t < 4*t_rise + t_const_h + 1e-3) {
                                     a_h = a_old_h + a_max_h/t_rise*delta_t;
-                                else
+                                    if (fabs(t-4*t_rise-t_const_h) <= 1e-3)
+                                        a_h = 0;
+                                }
+                                else {
                                     a_h = 0;
+                                }
                                 
-                                if (t < t_rise)
+                                if (t < t_rise + 1e-3) {
                                     a_z = a_old_z + a_max_z/t_rise*delta_t;
-                                else if (t < 2*t_rise)
+                                    if (fabs(t-t_rise) <= 1e-3)
+                                        a_z = a_max_z;
+                                }
+                                else if (t < 2*t_rise + 1e-3) {
                                     a_z = a_old_z - a_max_z/t_rise*delta_t;
-                                else if (t < 2*t_rise + t_const_z)
+                                    if (fabs(t-2*t_rise) <= 1e-3)
+                                        a_z = 0;
+                                }
+                                else if (t < 2*t_rise + t_const_z + 1e-3) {
                                     a_z = 0;
-                                else if (t < 3*t_rise + t_const_z)
+                                }
+                                else if (t < 3*t_rise + t_const_z + 1e-3) {
                                     a_z = a_old_z - a_max_z/t_rise*delta_t;
-                                else if (t < 4*t_rise + t_const_z)
+                                    if (fabs(t-3*t_rise-t_const_z) <= 1e-3)
+                                        a_z = -a_max_z;
+                                }
+                                else if (t < 4*t_rise + t_const_z + 1e-3) {
                                     a_z = a_old_z + a_max_z/t_rise*delta_t;
-                                else
+                                    if (fabs(t-4*t_rise-t_const_z) <= 1e-3)
+                                        a_z = 0;
+                                }
+                                else {
                                     a_z = 0;
+                                }
                                 
                                 if (t - (4*t_rise + std::max(t_const_h, t_const_z)) > 3.0) {       // Wait 3.0 s
                                     t_start = t_start + ros::Duration(t);
@@ -522,22 +584,39 @@ class BlimpController {
                                 v_old_z = v_z;
                                 t_old = t;
                                 
+                                
                                 command_thrust = pid_thrust.update(x-blimp.getOrigin().x());
                                 command_lift = pid_z.update(z-blimp.getOrigin().z());
+                                //pid_thrust.print_PID();
                                 msg.linear.x = command_thrust;
                                 msg.linear.z = command_lift;
+                                
+                                ROS_INFO("t = %2.6f, a = %1.6f, v = %1.6f, x = %2.6f", t, a_h, v_h, x);
                                 break;
                             case 3:
-                                if (t < t_rise)
+                                if (t < t_rise + 1e-3) {
                                     alpha = alpha_old + alpha_max/t_rise*delta_t;
-                                else if (t < 2*t_rise)
+                                    if (fabs(t-t_rise) <= 1e-3)
+                                        alpha = alpha_max;
+                                }
+                                else if (t < 2*t_rise + 1e-3) {
                                     alpha = alpha_old - alpha_max/t_rise*delta_t;
-                                else if (t < 2*t_rise + t_const)
+                                    if (fabs(t-2*t_rise) <= 1e-3)
+                                        alpha = 0;
+                                }
+                                else if (t < 2*t_rise + t_const + 1e-3) {
                                     alpha = 0;
-                                else if (t < 3*t_rise + t_const)
+                                }
+                                else if (t < 3*t_rise + t_const + 1e-3) {
                                     alpha = alpha_old - alpha_max/t_rise*delta_t;
-                                else if (t < 4*t_rise + t_const)
+                                    if (fabs(t-3*t_rise-t_const) <= 1e-3)
+                                        alpha = -alpha_max;
+                                }
+                                else if (t < 4*t_rise + t_const + 1e-3) {
                                     alpha = alpha_old + alpha_max/t_rise*delta_t;
+                                    if (fabs(t-4*t_rise-t_const) <= 1e-3)
+                                        alpha = 0;
+                                }
                                 else{
                                     alpha = 0;
                                     if (t - (4*t_rise + t_const) > 3.0) {       // Wait 3.0 s
@@ -553,9 +632,254 @@ class BlimpController {
                                 omega_old = omega;
                                 t_old = t;
                                 msg.angular.z = command_yaw;
+                                
+                                ROS_INFO("t = %2.6f, alpha = %1.6f, omega = %1.6f, yaw = %2.6f", t, alpha, omega, command_yaw);
                                 break;
                             case 4:
-                                // Immediate stop before creating new path
+                                // Immediate stop after rotation before creating new path
+                                if (time_brake < t_rise) {
+                                    if (t < 3*time_brake + 1e-3) {
+                                        alpha = alpha_old - alpha_max/t_rise*delta_t;
+                                    }
+                                    else if (t < 4*time_brake + 1e-3) {
+                                        alpha = alpha_old + alpha_max/t_rise*delta_t;
+                                        if (fabs(t-4*time_brake) <= 1e-3)
+                                            alpha = 0;
+                                    }
+                                    else {
+                                        alpha = 0;
+                                        if (t - 4*time_brake > 3.0) {
+                                            state = 0;
+                                            t_old = 0;
+                                            break;
+                                        }
+                                    }
+                                }
+                                else if (time_brake < 2*t_rise) {
+                                    if (t < 3*t_rise + 1e-3) {
+                                        alpha = alpha_old - alpha_max/t_rise*delta_t;
+                                        if (fabs(t-3*t_rise) <= 1e-3)
+                                            alpha = -alpha_max;
+                                    }
+                                    else if (t < 4*t_rise + 1e-3) {
+                                        alpha = alpha_old +alpha_max/t_rise*delta_t;
+                                        if (fabs(t-4*t_rise) <= 1e-3)
+                                            alpha = 0;
+                                    }
+                                    else {
+                                        alpha = 0;
+                                        if (t - 4*t_rise > 3.0) {
+                                            state = 0;
+                                            t_old = 0;
+                                            break;
+                                        }
+                                    }
+                                }
+                                else if (time_brake < 2*t_rise + t_const) {
+                                    if (t < time_brake + t_rise + 1e-3) {
+                                        alpha = alpha_old - alpha_max/t_rise*delta_t;
+                                        if (fabs(t-time_brake-t_rise) <= 1e-3)
+                                            alpha = -alpha_max;
+                                    }
+                                    else if (t < time_brake + 2*t_rise) {
+                                        alpha = alpha_old + alpha_max/t_rise*delta_t;
+                                        if (fabs(t-time_brake-2*t_rise) <= 1e-3)
+                                            alpha = 0;
+                                    }
+                                    else {
+                                        alpha = 0;
+                                        if (t - time_brake - 2*t_rise > 3.0) {
+                                            state = 0;
+                                            t_old = 0;
+                                            break;
+                                        }
+                                    }
+                                }
+                                else if (time_brake < 4*t_rise + t_const) {
+                                    if (t < 3*t_rise + t_const + 1e-3) {
+                                        alpha = alpha_old - alpha_max/t_rise*delta_t;
+                                        if (fabs(t-3*t_rise-t_const) <= 1e-3)
+                                            alpha = -alpha_max;
+                                    }
+                                    else if (t < 4*t_rise + t_const + 1e-3) {
+                                        alpha = alpha_old + alpha_max/t_rise*delta_t;
+                                        if (fabs(t-4*t_rise-t_const) <= 1e-3)
+                                            alpha = 0;
+                                    }
+                                    else {
+                                        alpha = 0;
+                                        if (t - 4*t_rise - t_const > 3.0) {
+                                            state = 0;
+                                            t_old = 0;
+                                            break;
+                                        }
+                                    }
+                                }
+                                omega = omega_old + (alpha_old+alpha)/2*delta_t;
+                                command_yaw = command_yaw + (omega_old+omega)/2*delta_t;
+                                
+                                alpha_old = alpha;
+                                omega_old = omega;
+                                t_old = t;
+                                msg.angular.z = command_yaw;
+                                
+                                ROS_INFO("t = %2.6f, alpha = %1.6f, omega = %1.6f, yaw = %2.6f", t, alpha, omega, command_yaw);
+                                break;
+                            case 5:
+                                // Immediate stop after transition before creating new path
+                                br.sendTransform(tf::StampedTransform(move_origin, ros::Time::now(), "world", "start"));
+                                listener.lookupTransform("start", "blimp", ros::Time(0), blimp);
+                                // For horizontal motion
+                                if (time_brake < t_rise) {
+                                    if (t < 3*time_brake + 1e-3) {
+                                        a_h = a_old_h - a_max_h/t_rise*delta_t;
+                                    }
+                                    else if (t < 4*time_brake + 1e-3) {
+                                        a_h = a_old_h + a_max_h/t_rise*delta_t;
+                                        if (fabs(t-4*time_brake) <= 1e-3)
+                                            a_h = 0;
+                                    }
+                                    else {
+                                        a_h = 0;
+                                    }
+                                    condition_h = 4*time_brake;
+                                }
+                                else if (time_brake < 2*t_rise) {
+                                    if (t < 3*t_rise + 1e-3) {
+                                        a_h = a_old_h - a_max_h/t_rise*delta_t;
+                                        if (fabs(t-3*t_rise) <= 1e-3)
+                                            a_h = -a_max_h;
+                                    }
+                                    else if (t < 4*t_rise + 1e-3) {
+                                        a_h = a_old_h + a_max_h/t_rise*delta_t;
+                                        if (fabs(t-4*t_rise) <= 1e-3)
+                                            a_h = 0;
+                                    }
+                                    else {
+                                        a_h = 0;
+                                    }
+                                    condition_h = 4*t_rise;
+                                }
+                                else if (time_brake < 2*t_rise + t_const_h) {
+                                    if (t < time_brake + t_rise + 1e-3) {
+                                        a_h = a_old_h - a_max_h/t_rise*delta_t;
+                                        if (fabs(t-time_brake-t_rise) <= 1e-3)
+                                            a_h = -a_max_h;
+                                    }
+                                    else if (t < time_brake + 2*t_rise + 1e-3) {
+                                        a_h = a_old_h + a_max_h/t_rise*delta_t;
+                                        if (fabs(t-time_brake-2*t_rise) <= 1e-3)
+                                            a_h = 0;
+                                    }
+                                    else {
+                                        a_h = 0;
+                                    }
+                                    condition_h = time_brake + 2*t_rise;
+                                }
+                                else if (time_brake < 4*t_rise + t_const_h) {
+                                    if (t < 3*t_rise + t_const_h + 1e-3) {
+                                        a_h = a_old_h - a_max_h/t_rise*delta_t;
+                                        if (fabs(t-3*t_rise-t_const_h) <= 1e-3)
+                                            a_h = -a_max_h;
+                                    }
+                                    else if (t < 4*t_rise + t_const_h + 1e-3) {
+                                        a_h = a_old_h + a_max_h/t_rise*delta_t;
+                                        if (fabs(t-4*t_rise-t_const_h) <= 1e-3)
+                                            a_h = 0;
+                                    }
+                                    else {
+                                        a_h = 0;
+                                    }
+                                    condition_h = 4*t_rise + t_const_h;
+                                }
+                                
+                                // For vertical motion
+                                if (time_brake < t_rise) {
+                                    if (t < 3*time_brake + 1e-3) {
+                                        a_z = a_old_z - a_max_z/t_rise*delta_t;
+                                    }
+                                    else if (t < 4*time_brake + 1e-3) {
+                                        a_z = a_old_z + a_max_z/t_rise*delta_t;
+                                        if (fabs(t-4*time_brake) <= 1e-3)
+                                            a_z = 0;
+                                    }
+                                    else {
+                                        a_z = 0;
+                                    }
+                                    condition_z = 4*time_brake;
+                                }
+                                else if (time_brake < 2*t_rise) {
+                                    if (t < 3*t_rise + 1e-3) {
+                                        a_z = a_old_z - a_max_z/t_rise*delta_t;
+                                        if (fabs(t-3*t_rise) <= 1e-3)
+                                            a_z = -a_max_z;
+                                    }
+                                    else if (t < 4*t_rise + 1e-3) {
+                                        a_z = a_old_z + a_max_z/t_rise*delta_t;
+                                        if (fabs(t-4*t_rise) <= 1e-3)
+                                            a_z = 0;
+                                    }
+                                    else {
+                                        a_z = 0;
+                                    }
+                                    condition_z = 4*t_rise;
+                                }
+                                else if (time_brake < 2*t_rise + t_const_z) {
+                                    if (t < time_brake + t_rise + 1e-3) {
+                                        a_z = a_old_z - a_max_z/t_rise*delta_t;
+                                        if (fabs(t-time_brake-t_rise) <= 1e-3)
+                                            a_z = -a_max_z;
+                                    }
+                                    else if (t < time_brake + 2*t_rise) {
+                                        a_z = a_old_z + a_max_z/t_rise*delta_t;
+                                        if (fabs(t-time_brake-2*t_rise) <= 1e-3)
+                                            a_z = 0;
+                                    }
+                                    else {
+                                        a_z = 0;
+                                    }
+                                    condition_z = time_brake + 2*t_rise;
+                                }
+                                else if (time_brake < 4*t_rise + t_const_z) {
+                                    if (t < 3*t_rise + t_const_z + 1e-3) {
+                                        a_z = a_old_z - a_max_z/t_rise*delta_t;
+                                        if (fabs(t-3*t_rise-t_const_z) <= 1e-3)
+                                            a_z = -a_max_z;
+                                    }
+                                    else if (t < 4*t_rise + t_const_z) {
+                                        a_z = a_old_z + a_max_z/t_rise*delta_t;
+                                        if (fabs(t-4*t_rise-t_const_z) <= 1e-3)
+                                            a_z = 0;
+                                    }
+                                    else {
+                                        a_z = 0;
+                                    }
+                                    condition_z = 4*t_rise + t_const_z;
+                                }
+                                
+                                if (t - std::max(condition_h, condition_z) > 3.0) {
+                                    state = 0;
+                                    t_old = 0;
+                                    break;
+                                }
+                                
+                                v_h = v_old_h + (a_old_h+a_h)/2*delta_t;
+                                x = x + (v_old_h+v_h)/2*delta_t;
+                                v_z = v_old_z + (a_old_z+a_z)/2*delta_t;
+                                z = z + (v_old_z+v_z)/2*delta_t;
+                                
+                                a_old_h = a_h;
+                                v_old_h = v_h;
+                                a_old_z = a_z;
+                                v_old_z = v_z;
+                                t_old = t;
+                                
+                                command_thrust = pid_thrust.update(x-blimp.getOrigin().x());
+                                command_lift = pid_z.update(z-blimp.getOrigin().z());
+                                //pid_thrust.print_PID();
+                                msg.linear.x = command_thrust;
+                                msg.linear.z = command_lift;
+                                ROS_INFO("t = %2.6f, a = %1.6f, v = %1.6f, x = %2.6f", t, a_h, v_h, x);
                                 break;
                             default:
                                 ROS_INFO("Stopped");
